@@ -154,7 +154,7 @@ document.addEventListener('mousemove', e=>{
   crosshair.style.top = e.clientY+'px';
 });
 
-//========================= ASSET LOADER (flat "assets/" folder) =========================
+//========================= ASSET LOADER (with auto white-background removal) =========================
 const ASSET_BASE = 'assets/';
 const ASSET_LIST = {
   player_idle:    'player_idle.png',
@@ -171,19 +171,69 @@ const ASSET_LIST = {
   concrete_tile:  'concrete_tile.png',
 };
 
+// Tiles keep their full background (they're textures, not characters)
+const SKIP_BG_REMOVAL = ['grass_tile','dirt_tile','concrete_tile'];
+
 const images = {};
 let totalAssets = Object.keys(ASSET_LIST).length;
 let loadedAssets = 0;
+
+function removeWhiteBackground(img){
+  const off = document.createElement('canvas');
+  off.width = img.naturalWidth || img.width;
+  off.height = img.naturalHeight || img.height;
+  const offCtx = off.getContext('2d');
+  offCtx.drawImage(img, 0, 0, off.width, off.height);
+
+  const imageData = offCtx.getImageData(0, 0, off.width, off.height);
+  const data = imageData.data;
+
+  const THRESHOLD = 232; // pixels brighter than this on all channels become transparent
+
+  for(let i=0; i<data.length; i+=4){
+    const r = data[i], g = data[i+1], b = data[i+2];
+    if(r > THRESHOLD && g > THRESHOLD && b > THRESHOLD){
+      data[i+3] = 0;
+    } else if(r > 210 && g > 210 && b > 210){
+      // soft-edge fade for anti-aliased edges near white
+      const avg = (r+g+b)/3;
+      const fade = Math.max(0, 1 - (avg-200)/55);
+      data[i+3] = data[i+3] * fade;
+    }
+  }
+
+  offCtx.putImageData(imageData, 0, 0);
+  off.ok = true;
+  off.naturalWidth = off.width;
+  off.naturalHeight = off.height;
+  return off;
+}
 
 function loadAssets(onComplete){
   document.getElementById('loadText').textContent = `0 / ${totalAssets}`;
   Object.entries(ASSET_LIST).forEach(([key, path])=>{
     const img = new Image();
     img.src = ASSET_BASE + path;
-    img.ok = false;
-    img.onload = ()=>{ img.ok = true; assetProgress(); };
-    img.onerror = ()=>{ img.ok = false; console.warn('⚠ Missing asset (using fallback shape):', path); assetProgress(); };
-    images[key] = img;
+    img.onload = ()=>{
+      if(SKIP_BG_REMOVAL.includes(key)){
+        img.ok = true;
+        images[key] = img;
+      } else {
+        try{
+          images[key] = removeWhiteBackground(img);
+        } catch(e){
+          console.warn('BG removal failed for', key, e);
+          img.ok = true;
+          images[key] = img;
+        }
+      }
+      assetProgress();
+    };
+    img.onerror = ()=>{
+      images[key] = { ok:false };
+      console.warn('⚠ Missing asset (using fallback shape):', path);
+      assetProgress();
+    };
   });
   function assetProgress(){
     loadedAssets++;
